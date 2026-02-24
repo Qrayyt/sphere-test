@@ -7,75 +7,78 @@
   <style>
     html,body{height:100%;margin:0;background:#000;display:grid;place-items:center;overflow:hidden}
     .wrap{width:min(560px,92vw);aspect-ratio:1/1;display:grid;place-items:center}
-    svg{
-      width:min(340px,72vw);
-      height:auto;
-      transform:translateY(10vh);
-    }
+    svg{width:min(360px,74vw);height:auto;transform:translateY(10vh)}
 
-    /* общий “живой” пульс */
     .orb{
-      animation: breathe 2.6s ease-in-out infinite;
+      animation: breathe 2.8s ease-in-out infinite;
       filter:
-        drop-shadow(0 0 10px rgba(255,255,255,.22))
-        drop-shadow(0 0 30px rgba(255,255,255,.12))
-        drop-shadow(0 0 90px rgba(255,255,255,.05));
+        drop-shadow(0 0 10px rgba(255,255,255,.20))
+        drop-shadow(0 0 35px rgba(255,255,255,.10))
+        drop-shadow(0 0 120px rgba(255,255,255,.05));
     }
     @keyframes breathe{
-      0%,100%{opacity:.80; transform:translateY(10vh) scale(1)}
+      0%,100%{opacity:.85; transform:translateY(10vh) scale(1)}
       50%{opacity:1; transform:translateY(10vh) scale(1.03)}
     }
 
-    /* очень медленное вращение — почти незаметно */
-    .spin { transform-origin: 150px 150px; animation: spin 12s linear infinite; }
+    /* очень медленно вращаем только блики, не всю сферу */
+    .spin { transform-origin: 150px 150px; animation: spin 10.5s linear infinite; }
     @keyframes spin{to{transform:rotate(360deg)}}
 
-    /* линия “живая”: немного гуляет яркость */
-    .mainStroke{
-      animation: flicker 1.9s ease-in-out infinite;
-    }
-    @keyframes flicker{
-      0%,100%{opacity:.88}
+    /* мерцание всей линии */
+    .flick{ animation: flick 2.1s ease-in-out infinite; }
+    @keyframes flick{ 0%,100%{opacity:.92} 50%{opacity:1} }
+
+    /* “вспышки” по контуру: короткие сегменты */
+    .flareA{ stroke-dasharray: 46 999; animation: dashA 3.8s linear infinite, flare 1.7s ease-in-out infinite; }
+    .flareB{ stroke-dasharray: 28 999; animation: dashB 5.2s linear infinite, flare 2.2s ease-in-out infinite; }
+    .flareC{ stroke-dasharray: 18 999; animation: dashC 4.6s linear infinite reverse, flare 1.9s ease-in-out infinite; }
+
+    @keyframes dashA{ to{ stroke-dashoffset:-380; } }
+    @keyframes dashB{ to{ stroke-dashoffset:-520; } }
+    @keyframes dashC{ to{ stroke-dashoffset:-460; } }
+
+    @keyframes flare{
+      0%,100%{opacity:.25}
       50%{opacity:1}
     }
 
-    /* блик, который очень мягко “ездит” по контуру */
-    .highlight{
-      stroke-dasharray: 36 999;
-      animation: dash 3.8s linear infinite, flicker2 2.2s ease-in-out infinite;
-      opacity:.95;
+    /* внутренняя “царапка” живёт, но не бросается */
+    .inner{
+      opacity:.22;
+      animation: inner 2.9s ease-in-out infinite;
     }
-    @keyframes dash { to { stroke-dashoffset: -260; } }
-    @keyframes flicker2{
-      0%,100%{opacity:.55}
-      50%{opacity:.95}
+    @keyframes inner{ 0%,100%{opacity:.14} 50%{opacity:.28} }
+
+    @media (prefers-reduced-motion: reduce){
+      .orb,.spin,.flick,.flareA,.flareB,.flareC,.inner{animation:none!important}
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <svg viewBox="0 0 300 300" class="orb" aria-hidden="true">
+    <svg class="orb" viewBox="0 0 300 300" aria-hidden="true">
       <defs>
-        <!-- ГЛАВНЫЙ фильтр: лёгкая “неровность” линии -->
-        <filter id="wobble" x="-30%" y="-30%" width="160%" height="160%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="8" result="noise">
-            <animate attributeName="baseFrequency" dur="3.6s" values="0.010;0.014;0.010" repeatCount="indefinite"/>
+        <!-- неровность (делает линию “живой”) -->
+        <filter id="wobble" x="-35%" y="-35%" width="170%" height="170%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.010" numOctaves="2" seed="11" result="n">
+            <animate attributeName="baseFrequency" dur="3.4s" values="0.009;0.012;0.009" repeatCount="indefinite"/>
           </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" xChannelSelector="R" yChannelSelector="G"/>
+          <feDisplacementMap in="SourceGraphic" in2="n" scale="11" xChannelSelector="R" yChannelSelector="G"/>
         </filter>
 
-        <!-- мягкое свечение -->
-        <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="2.6" result="b"/>
+        <!-- свечение (жёстче, чтобы был “прожиг” как в рефе) -->
+        <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
+          <feGaussianBlur stdDeviation="2.1" result="b"/>
           <feMerge>
             <feMergeNode in="b"/>
             <feMergeNode in="SourceGraphic"/>
           </feMerge>
         </filter>
 
-        <!-- огромная аура -->
-        <filter id="aura" x="-120%" y="-120%" width="340%" height="340%">
-          <feGaussianBlur stdDeviation="14" result="bb"/>
+        <!-- большая аура -->
+        <filter id="aura" x="-140%" y="-140%" width="380%" height="380%">
+          <feGaussianBlur stdDeviation="16" result="bb"/>
           <feColorMatrix in="bb" type="matrix"
             values="
               1 0 0 0 0
@@ -84,51 +87,69 @@
               0 0 0 0.22 0"/>
         </filter>
 
-        <!-- слегка неровный контур: НЕ идеальный круг -->
-        <!-- Это path, а не circle, чтобы не было “лоадер-вайба” -->
+        <!-- градиент яркости по штриху (чтобы не было “одинаково белое”) -->
+        <linearGradient id="strokeGrad" x1="70" y1="70" x2="230" y2="230" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="white" stop-opacity="0.65"/>
+          <stop offset="0.35" stop-color="white" stop-opacity="0.95"/>
+          <stop offset="0.7" stop-color="white" stop-opacity="0.55"/>
+          <stop offset="1" stop-color="white" stop-opacity="0.85"/>
+        </linearGradient>
+
+        <!-- НЕ идеальный круг: чуть “помятый” контур -->
         <path id="ring"
           d="M150 70
-             C198 70, 232 104, 232 150
-             C232 202, 200 232, 150 232
-             C102 232, 68 202, 68 150
-             C68 104, 100 70, 150 70 Z" />
+             C201 71, 235 104, 234 150
+             C233 204, 198 233, 150 232
+             C103 231, 67 201, 68 150
+             C69 104, 98 69, 150 70 Z" />
       </defs>
 
-      <!-- аура сзади -->
-      <g class="spin">
-        <use href="#ring" fill="none" stroke="white" stroke-width="18" opacity=".22" filter="url(#aura)"/>
+      <!-- аура -->
+      <use href="#ring" fill="none" stroke="white" stroke-width="20" opacity=".18" filter="url(#aura)"/>
+
+      <!-- базовый мягкий контур (толще, но тусклый) -->
+      <g filter="url(#wobble)">
+        <use href="#ring" fill="none" stroke="white" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round" opacity=".12"/>
       </g>
 
-      <!-- “тело” контура (тёмное/почти невидимое), чтобы был объём -->
-      <use href="#ring" fill="none" stroke="white" stroke-width="10" opacity=".10"/>
+      <!-- основной “световой” контур: не слишком жирный, но яркий -->
+      <g filter="url(#wobble)">
+        <use href="#ring"
+             class="flick"
+             fill="none"
+             stroke="url(#strokeGrad)"
+             stroke-width="6.4"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             filter="url(#glow)"/>
+      </g>
 
-      <!-- главный светящийся контур -->
+      <!-- вспышки (локальные яркие зоны, которые двигаются) -->
       <g class="spin" filter="url(#wobble)">
-        <use href="#ring"
-             class="mainStroke"
-             fill="none"
-             stroke="white"
-             stroke-width="6.2"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             opacity=".92"
+        <!-- Супер-яркая тонкая сердцевина -->
+        <use href="#ring" class="flareA"
+             fill="none" stroke="white"
+             stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"
              filter="url(#glow)"/>
 
-        <!-- движущийся блик по контуру (очень мягко) -->
-        <use href="#ring"
-             class="highlight"
-             fill="none"
-             stroke="white"
-             stroke-width="6.6"
-             stroke-linecap="round"
-             stroke-linejoin="round"
+        <!-- Вторая вспышка, чуть тоньше -->
+        <use href="#ring" class="flareB"
+             fill="none" stroke="white"
+             stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round"
+             filter="url(#glow)"/>
+
+        <!-- Маленькая третья, чтобы было “случайно” -->
+        <use href="#ring" class="flareC"
+             fill="none" stroke="white"
+             stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"
              filter="url(#glow)"/>
       </g>
 
-      <!-- пара внутренних мягких “переливов”, но без дурацких пунктиров -->
-      <g opacity=".18" filter="url(#glow)">
-        <path d="M120 120 C110 150, 125 178, 150 188" fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>
-        <path d="M165 110 C190 125, 190 160, 170 175" fill="none" stroke="white" stroke-width="3.4" stroke-linecap="round"/>
+      <!-- внутренние “переливы/царапки” -->
+      <g class="inner" filter="url(#glow)">
+        <path d="M118 126 C108 152, 122 178, 146 190" fill="none" stroke="white" stroke-width="4.2" stroke-linecap="round"/>
+        <path d="M168 116 C190 130, 192 158, 174 174" fill="none" stroke="white" stroke-width="3.6" stroke-linecap="round"/>
+        <path d="M142 108 C132 124, 130 140, 138 154" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round" opacity=".7"/>
       </g>
     </svg>
   </div>
