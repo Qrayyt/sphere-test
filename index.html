@@ -1,144 +1,257 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Voice Orb</title>
-<style>
-html,body{
-  margin:0;
-  height:100%;
-  background:#000;
-  display:grid;
-  place-items:center;
-  overflow:hidden;
-}
-
-canvas{
-  width:min(420px,80vw);
-  height:min(420px,80vw);
-}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Voice Orb</title>
+  <style>
+    html,body{height:100%;margin:0;background:#000;overflow:hidden}
+    body{display:grid;place-items:center}
+    canvas{width:min(520px,86vw);height:min(520px,86vw);touch-action:manipulation}
+    .hint{
+      position:fixed;inset:auto 0 8vh 0;
+      text-align:center;
+      font:500 14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      color:rgba(255,255,255,.55);
+      letter-spacing:.2px;
+      user-select:none;
+      pointer-events:none;
+    }
+  </style>
 </head>
 <body>
-
-<canvas id="c"></canvas>
+  <canvas id="c"></canvas>
+  <div class="hint" id="hint">тапни по кругу — включим микрофон</div>
 
 <script>
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
+(() => {
+  const canvas = document.getElementById('c');
+  const hint = document.getElementById('hint');
+  const ctx = canvas.getContext('2d');
 
-let size = 500;
-canvas.width = size;
-canvas.height = size;
+  let W=0,H=0,DPR=1;
+  function resize(){
+    DPR = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
+    const cssW = Math.min(520, Math.floor(window.innerWidth * 0.86));
+    const cssH = Math.min(520, Math.floor(window.innerWidth * 0.86));
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    W = Math.floor(cssW * DPR);
+    H = Math.floor(cssH * DPR);
+    canvas.width = W;
+    canvas.height = H;
+  }
+  window.addEventListener('resize', resize, {passive:true});
+  resize();
 
-let analyser, dataArray;
-let smoothVolume = 0;
-let started = false;
+  // -------- Audio ----------
+  let audioCtx=null, analyser=null, freq=null, time=null, started=false;
+  async function startMic(){
+    if(started) return;
+    started = true;
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
 
-async function init(){
-  if(started) return;
-  started = true;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.85;
 
-  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
+      const src = audioCtx.createMediaStreamSource(stream);
+      src.connect(analyser);
 
-  const source = audioCtx.createMediaStreamSource(stream);
-  source.connect(analyser);
+      freq = new Uint8Array(analyser.frequencyBinCount);
+      time = new Uint8Array(analyser.fftSize);
 
-  dataArray = new Uint8Array(analyser.frequencyBinCount);
-}
+      hint.textContent = 'говори — круг будет жить';
+      setTimeout(()=>hint.style.opacity='0', 1200);
+    } catch(e){
+      hint.textContent = 'не дали микрофон :(';
+      started = false;
+    }
+  }
 
-canvas.addEventListener("click", init);
-canvas.addEventListener("touchstart", init);
+  canvas.addEventListener('pointerdown', () => {
+    startMic();
+    // iOS иногда держит контекст в suspended, добиваем
+    if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  }, {passive:true});
 
-function draw(){
+  // -------- Utils ----------
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+
+  // “чистый” псевдо-noise без либ (сумма синусов — мягко и органично)
+  function noise1(x, t){
+    return (
+      Math.sin(x*1.7 + t*0.9) * 0.55 +
+      Math.sin(x*3.9 - t*0.6) * 0.28 +
+      Math.sin(x*7.2 + t*1.3) * 0.17
+    );
+  }
+
+  // -------- State smoothing ----------
+  let smVol=0, smBass=0, smSnap=0;
+  function readAudio(){
+    if(!analyser) return {vol:0,bass:0,snap:0};
+
+    analyser.getByteFrequencyData(freq);
+    analyser.getByteTimeDomainData(time);
+
+    // RMS по time-domain (громкость)
+    let acc=0;
+    for(let i=0;i<time.length;i++){
+      const v=(time[i]-128)/128;
+      acc += v*v;
+    }
+    const rms = Math.sqrt(acc/time.length); // 0..~1
+
+    // bass (первые ~10% бинов)
+    const bassBins = Math.max(6, Math.floor(freq.length * 0.10));
+    let b=0;
+    for(let i=0;i<bassBins;i++) b += freq[i];
+    b = (b / bassBins) / 255;
+
+    // snap (резкие атаки): разница между соседними time семплами
+    let s=0;
+    for(let i=1;i<time.length;i++){
+      s += Math.abs(time[i]-time[i-1]);
+    }
+    s = (s / (time.length-1)) / 255;
+
+    // сглаживание (важно для “стиля”, чтобы не дёргалось)
+    smVol  = lerp(smVol,  clamp(rms*1.6, 0, 1), 0.08);
+    smBass = lerp(smBass, clamp(b*1.4,   0, 1), 0.10);
+    smSnap = lerp(smSnap, clamp(s*2.0,   0, 1), 0.12);
+
+    return {vol:smVol, bass:smBass, snap:smSnap};
+  }
+
+  // -------- Render ----------
+  function draw(tms){
+    requestAnimationFrame(draw);
+    const t = tms * 0.001;
+
+    const {vol,bass,snap} = readAudio();
+
+    ctx.clearRect(0,0,W,H);
+
+    const cx=W/2, cy=H/2;
+    const baseR = Math.min(W,H)*0.22;
+    const breathe = (Math.sin(t*1.2)*0.5+0.5); // 0..1
+    const r = baseR + vol*baseR*0.28 + breathe*baseR*0.05;
+
+    // фон — чуть виньетка, чтобы было “дороже”
+    const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(W,H)*0.7);
+    bg.addColorStop(0,'rgba(255,255,255,0.035)');
+    bg.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0,0,W,H);
+
+    // общий glow
+    ctx.save();
+    ctx.translate(cx,cy);
+
+    // мягкая аура вокруг
+    ctx.globalCompositeOperation = 'screen';
+    ctx.fillStyle = `rgba(255,255,255,${0.06 + vol*0.10})`;
+    ctx.beginPath();
+    ctx.arc(0,0, r*1.25, 0, Math.PI*2);
+    ctx.fill();
+
+    // --- Рисуем “живой контур” в 3 слоя: outer glow, core, micro highlight ---
+    const N = 240;
+    const wobble = (0.55 + vol*1.25);      // насколько “живой”
+    const rough  = (0.25 + bass*1.10);     // бас добавляет “неровность”
+    const thick  = (1.0 + vol*1.2);        // громкость даёт жирность
+
+    function pathWith(fnRadius){
+      ctx.beginPath();
+      for(let i=0;i<=N;i++){
+        const a = (i/N)*Math.PI*2;
+        const n = noise1(a, t);
+        const rr = fnRadius(a, n);
+        const x = Math.cos(a)*rr;
+        const y = Math.sin(a)*rr;
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath();
+    }
+
+    // OUTER glow
+    ctx.shadowColor = 'rgba(255,255,255,0.35)';
+    ctx.shadowBlur  = (18 + vol*38) * DPR;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = `rgba(255,255,255,${0.22 + vol*0.18})`;
+    ctx.lineWidth = (10.5 + vol*10) * DPR;
+    pathWith((a,n)=> r + (n*10*wobble + Math.sin(a*9 - t*2.4)*4*rough));
+    ctx.stroke();
+
+    // CORE line
+    ctx.shadowBlur = (10 + vol*18) * DPR;
+    ctx.strokeStyle = `rgba(255,255,255,${0.80 + vol*0.18})`;
+    ctx.lineWidth = (3.2 + thick*2.0) * DPR;
+    pathWith((a,n)=> r + (n*6*wobble + Math.sin(a*7 + t*1.7)*2.2*rough));
+    ctx.stroke();
+
+    // “GPT-like” moving highlights (2–3 вспышки, завязаны на голос)
+    // Сделано не “пунктиром”, а мягкими дугами с градиентом.
+    ctx.shadowBlur = (16 + vol*26) * DPR;
+    ctx.globalAlpha = 1;
+
+    function arcHighlight(phase, width, power){
+      const center = (t*0.55 + phase) % 1; // 0..1
+      const start = (center - width/2) * Math.PI*2;
+      const end   = (center + width/2) * Math.PI*2;
+
+      const g = ctx.createLinearGradient(
+        Math.cos(start)*r, Math.sin(start)*r,
+        Math.cos(end)*r,   Math.sin(end)*r
+      );
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(255,255,255,${0.65 + power})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+
+      ctx.strokeStyle = g;
+      ctx.lineWidth = (4.0 + power*4.5) * DPR;
+      ctx.beginPath();
+      ctx.arc(0,0, r + (Math.sin(t*1.4)*1.2), start, end);
+      ctx.stroke();
+    }
+
+    const p = clamp(vol*0.85 + snap*0.55, 0, 1);
+    arcHighlight(0.12, 0.22 + p*0.10, p*0.55);
+    arcHighlight(0.47, 0.16 + bass*0.10, p*0.35);
+    arcHighlight(0.78, 0.10 + p*0.08, p*0.25);
+
+    // Внутренние “нитки” — очень subtle, чтобы не было каши
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowBlur = (6 + vol*10) * DPR;
+    ctx.strokeStyle = `rgba(255,255,255,${0.10 + vol*0.14})`;
+    ctx.lineWidth = (2.0) * DPR;
+
+    const innerR = r*0.52;
+    ctx.beginPath();
+    ctx.arc(0,0, innerR,  0.25 + Math.sin(t*0.8)*0.08,  1.85 + Math.sin(t*0.9)*0.09);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(0,0, innerR*1.08,  3.35 + Math.sin(t*0.7)*0.10,  4.65 + Math.sin(t*1.0)*0.12);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // маленькая подсказка если не стартанули микрофон
+    if(!analyser){
+      hint.style.opacity = '1';
+    }
+  }
+
   requestAnimationFrame(draw);
-  ctx.clearRect(0,0,size,size);
-
-  const cx = size/2;
-  const cy = size/2;
-
-  let volume = 0;
-
-  if(analyser){
-    analyser.getByteFrequencyData(dataArray);
-    let sum = 0;
-    for(let i=0;i<dataArray.length;i++){
-      sum += dataArray[i];
-    }
-    volume = sum / dataArray.length / 255;
-  }
-
-  // сглаживание чтобы не дёргалось
-  smoothVolume += (volume - smoothVolume) * 0.08;
-
-  const baseRadius = 135;
-  const dynamicRadius = baseRadius + smoothVolume * 50;
-
-  ctx.save();
-  ctx.translate(cx,cy);
-
-  // OUTER GLOW
-  ctx.shadowColor = "white";
-  ctx.shadowBlur = 40 + smoothVolume*60;
-
-  // Градиент для “ядра” линии
-  const grad = ctx.createRadialGradient(
-    0,0,dynamicRadius*0.8,
-    0,0,dynamicRadius*1.2
-  );
-  grad.addColorStop(0,"rgba(255,255,255,0.15)");
-  grad.addColorStop(1,"rgba(255,255,255,0.9)");
-
-  ctx.strokeStyle = grad;
-  ctx.lineWidth = 4.5;
-
-  ctx.beginPath();
-
-  const points = 120;
-  for(let i=0;i<=points;i++){
-    const angle = (i/points)*Math.PI*2;
-
-    // очень мягкая неровность
-    const subtleNoise =
-      Math.sin(angle*2 + performance.now()*0.0015)*3 +
-      Math.sin(angle*5 + performance.now()*0.0008)*2;
-
-    const r = dynamicRadius + subtleNoise * (0.4 + smoothVolume*0.8);
-
-    const x = Math.cos(angle)*r;
-    const y = Math.sin(angle)*r;
-
-    if(i===0){
-      ctx.moveTo(x,y);
-    } else {
-      ctx.lineTo(x,y);
-    }
-  }
-
-  ctx.closePath();
-  ctx.stroke();
-
-  // внутренняя мягкая аура
-  const innerGlow = ctx.createRadialGradient(
-    0,0,0,
-    0,0,dynamicRadius*1.5
-  );
-  innerGlow.addColorStop(0,"rgba(255,255,255,0.05)");
-  innerGlow.addColorStop(1,"rgba(255,255,255,0)");
-
-  ctx.fillStyle = innerGlow;
-  ctx.beginPath();
-  ctx.arc(0,0,dynamicRadius*1.4,0,Math.PI*2);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-draw();
+})();
 </script>
 </body>
 </html>
