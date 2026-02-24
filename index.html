@@ -9,13 +9,11 @@
     body{display:grid;place-items:center}
     canvas{width:min(520px,86vw);height:min(520px,86vw);touch-action:manipulation}
     .hint{
-      position:fixed;inset:auto 0 8vh 0;
-      text-align:center;
+      position:fixed;inset:auto 0 8vh 0;text-align:center;
       font:500 14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial;
       color:rgba(255,255,255,.55);
-      letter-spacing:.2px;
-      user-select:none;
-      pointer-events:none;
+      user-select:none;pointer-events:none;
+      transition:opacity .25s ease;
     }
   </style>
 </head>
@@ -27,37 +25,36 @@
 (() => {
   const canvas = document.getElementById('c');
   const hint = document.getElementById('hint');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: true });
 
   let W=0,H=0,DPR=1;
   function resize(){
     DPR = Math.max(1, Math.min(2.5, window.devicePixelRatio || 1));
-    const cssW = Math.min(520, Math.floor(window.innerWidth * 0.86));
-    const cssH = Math.min(520, Math.floor(window.innerWidth * 0.86));
-    canvas.style.width = cssW + 'px';
-    canvas.style.height = cssH + 'px';
-    W = Math.floor(cssW * DPR);
-    H = Math.floor(cssH * DPR);
-    canvas.width = W;
-    canvas.height = H;
+    const css = Math.min(560, Math.floor(Math.min(innerWidth, innerHeight) * 0.86));
+    canvas.style.width = css + 'px';
+    canvas.style.height = css + 'px';
+    W = Math.floor(css * DPR);
+    H = Math.floor(css * DPR);
+    canvas.width = W; canvas.height = H;
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.scale(DPR, DPR);
   }
-  window.addEventListener('resize', resize, {passive:true});
+  addEventListener('resize', resize, {passive:true});
   resize();
 
-  // -------- Audio ----------
+  // ---------- Audio ----------
   let audioCtx=null, analyser=null, freq=null, time=null, started=false;
   async function startMic(){
     if(started) return;
     started = true;
     try{
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
       });
-
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.85;
+      analyser.smoothingTimeConstant = 0.88;
 
       const src = audioCtx.createMediaStreamSource(stream);
       src.connect(analyser);
@@ -66,33 +63,47 @@
       time = new Uint8Array(analyser.fftSize);
 
       hint.textContent = 'говори — круг будет жить';
-      setTimeout(()=>hint.style.opacity='0', 1200);
+      setTimeout(()=>hint.style.opacity='0', 900);
     } catch(e){
-      hint.textContent = 'не дали микрофон :(';
+      hint.textContent = 'микрофон не дали :(';
       started = false;
     }
   }
-
   canvas.addEventListener('pointerdown', () => {
     startMic();
-    // iOS иногда держит контекст в suspended, добиваем
     if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   }, {passive:true});
 
-  // -------- Utils ----------
+  // ---------- Utils ----------
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const lerp=(a,b,t)=>a+(b-a)*t;
 
-  // “чистый” псевдо-noise без либ (сумма синусов — мягко и органично)
-  function noise1(x, t){
+  // мягкий noise (без “ежа”)
+  function n1(a,t){
     return (
-      Math.sin(x*1.7 + t*0.9) * 0.55 +
-      Math.sin(x*3.9 - t*0.6) * 0.28 +
-      Math.sin(x*7.2 + t*1.3) * 0.17
+      Math.sin(a*1.6 + t*0.9) * 0.55 +
+      Math.sin(a*3.8 - t*0.6) * 0.30 +
+      Math.sin(a*7.1 + t*1.2) * 0.15
     );
   }
 
-  // -------- State smoothing ----------
+  // плавная линия без дыр: квадратичные кривые
+  function strokeSmooth(points){
+    ctx.beginPath();
+    const n = points.length;
+    for(let i=0;i<n;i++){
+      const p0 = points[i];
+      const p1 = points[(i+1)%n];
+      const mx = (p0.x + p1.x)/2;
+      const my = (p0.y + p1.y)/2;
+      if(i===0) ctx.moveTo(mx,my);
+      else ctx.quadraticCurveTo(p0.x,p0.y,mx,my);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  // ---------- Audio read + smoothing ----------
   let smVol=0, smBass=0, smSnap=0;
   function readAudio(){
     if(!analyser) return {vol:0,bass:0,snap:0};
@@ -100,157 +111,138 @@
     analyser.getByteFrequencyData(freq);
     analyser.getByteTimeDomainData(time);
 
-    // RMS по time-domain (громкость)
+    // RMS volume
     let acc=0;
     for(let i=0;i<time.length;i++){
       const v=(time[i]-128)/128;
       acc += v*v;
     }
-    const rms = Math.sqrt(acc/time.length); // 0..~1
+    const rms = Math.sqrt(acc/time.length);
 
-    // bass (первые ~10% бинов)
-    const bassBins = Math.max(6, Math.floor(freq.length * 0.10));
+    // bass energy (first 10%)
+    const bassBins = Math.max(8, Math.floor(freq.length*0.10));
     let b=0;
     for(let i=0;i<bassBins;i++) b += freq[i];
-    b = (b / bassBins) / 255;
+    b = (b/bassBins)/255;
 
-    // snap (резкие атаки): разница между соседними time семплами
+    // snap (attack-ish)
     let s=0;
-    for(let i=1;i<time.length;i++){
-      s += Math.abs(time[i]-time[i-1]);
-    }
-    s = (s / (time.length-1)) / 255;
+    for(let i=1;i<time.length;i++) s += Math.abs(time[i]-time[i-1]);
+    s = (s/(time.length-1))/255;
 
-    // сглаживание (важно для “стиля”, чтобы не дёргалось)
-    smVol  = lerp(smVol,  clamp(rms*1.6, 0, 1), 0.08);
-    smBass = lerp(smBass, clamp(b*1.4,   0, 1), 0.10);
-    smSnap = lerp(smSnap, clamp(s*2.0,   0, 1), 0.12);
+    smVol  = lerp(smVol,  clamp(rms*1.7, 0, 1), 0.10);
+    smBass = lerp(smBass, clamp(b*1.5,   0, 1), 0.12);
+    smSnap = lerp(smSnap, clamp(s*2.0,   0, 1), 0.14);
 
-    return {vol:smVol, bass:smBass, snap:smSnap};
+    return {vol:smVol,bass:smBass,snap:smSnap};
   }
 
-  // -------- Render ----------
-  function draw(tms){
-    requestAnimationFrame(draw);
-    const t = tms * 0.001;
+  // ---------- Render ----------
+  function frame(tms){
+    requestAnimationFrame(frame);
+    const t = tms*0.001;
+
+    const cssW = W/DPR, cssH = H/DPR;
+    ctx.clearRect(0,0,cssW,cssH);
 
     const {vol,bass,snap} = readAudio();
 
-    ctx.clearRect(0,0,W,H);
+    const cx=cssW/2, cy=cssH/2;
+    const baseR = Math.min(cssW,cssH)*0.225;
 
-    const cx=W/2, cy=H/2;
-    const baseR = Math.min(W,H)*0.22;
-    const breathe = (Math.sin(t*1.2)*0.5+0.5); // 0..1
-    const r = baseR + vol*baseR*0.28 + breathe*baseR*0.05;
+    // в тишине почти статичен, при речи оживает
+    const activity = clamp(vol*0.9 + snap*0.55 + bass*0.35, 0, 1);
 
-    // фон — чуть виньетка, чтобы было “дороже”
-    const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(W,H)*0.7);
-    bg.addColorStop(0,'rgba(255,255,255,0.035)');
-    bg.addColorStop(1,'rgba(0,0,0,0)');
+    const r = baseR
+      + activity*baseR*0.22
+      + (Math.sin(t*1.1)*0.5+0.5)*baseR*0.03;
+
+    // виньетка/аура фона
+    const bg = ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(cssW,cssH)*0.75);
+    bg.addColorStop(0, `rgba(255,255,255,${0.030 + activity*0.020})`);
+    bg.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = bg;
-    ctx.fillRect(0,0,W,H);
+    ctx.fillRect(0,0,cssW,cssH);
 
-    // общий glow
-    ctx.save();
-    ctx.translate(cx,cy);
+    // строим контур точками
+    const N = 320; // много точек -> никаких дыр/углов
+    const wobble = 0.35 + activity*1.15;
+    const rough  = 0.18 + bass*0.95;
 
-    // мягкая аура вокруг
-    ctx.globalCompositeOperation = 'screen';
-    ctx.fillStyle = `rgba(255,255,255,${0.06 + vol*0.10})`;
-    ctx.beginPath();
-    ctx.arc(0,0, r*1.25, 0, Math.PI*2);
-    ctx.fill();
-
-    // --- Рисуем “живой контур” в 3 слоя: outer glow, core, micro highlight ---
-    const N = 240;
-    const wobble = (0.55 + vol*1.25);      // насколько “живой”
-    const rough  = (0.25 + bass*1.10);     // бас добавляет “неровность”
-    const thick  = (1.0 + vol*1.2);        // громкость даёт жирность
-
-    function pathWith(fnRadius){
-      ctx.beginPath();
-      for(let i=0;i<=N;i++){
-        const a = (i/N)*Math.PI*2;
-        const n = noise1(a, t);
-        const rr = fnRadius(a, n);
-        const x = Math.cos(a)*rr;
-        const y = Math.sin(a)*rr;
-        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-      }
-      ctx.closePath();
+    const pts = new Array(N);
+    for(let i=0;i<N;i++){
+      const a = (i/N)*Math.PI*2;
+      const nn = n1(a, t);
+      const rr = r + nn*(10*wobble) + Math.sin(a*9 - t*2.0)*(3.5*rough);
+      pts[i] = { x: cx + Math.cos(a)*rr, y: cy + Math.sin(a)*rr };
     }
 
-    // OUTER glow
+    // 1) СПЛОШНАЯ БАЗА (никаких градиентов, чтобы не рвало)
+    ctx.save();
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+
+    ctx.shadowColor = 'rgba(255,255,255,0.25)';
+    ctx.shadowBlur  = (18 + activity*34);
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = (3.2 + activity*2.6);
+    strokeSmooth(pts);
+
+    // 2) ВНЕШНЕЕ СВЕЧЕНИЕ (толстый слой, но полупрозрачный)
+    ctx.globalCompositeOperation = 'lighter';
     ctx.shadowColor = 'rgba(255,255,255,0.35)';
-    ctx.shadowBlur  = (18 + vol*38) * DPR;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = `rgba(255,255,255,${0.22 + vol*0.18})`;
-    ctx.lineWidth = (10.5 + vol*10) * DPR;
-    pathWith((a,n)=> r + (n*10*wobble + Math.sin(a*9 - t*2.4)*4*rough));
-    ctx.stroke();
+    ctx.shadowBlur  = (30 + activity*55);
+    ctx.strokeStyle = `rgba(255,255,255,${0.16 + activity*0.14})`;
+    ctx.lineWidth = (12 + activity*14);
+    strokeSmooth(pts);
 
-    // CORE line
-    ctx.shadowBlur = (10 + vol*18) * DPR;
-    ctx.strokeStyle = `rgba(255,255,255,${0.80 + vol*0.18})`;
-    ctx.lineWidth = (3.2 + thick*2.0) * DPR;
-    pathWith((a,n)=> r + (n*6*wobble + Math.sin(a*7 + t*1.7)*2.2*rough));
-    ctx.stroke();
+    // 3) “ВСПЫШКИ” (НЕ пунктир, а мягкие движущиеся дуги)
+    ctx.shadowBlur  = (20 + activity*40);
+    function highlight(phase, width, strength){
+      const c = (t*0.55 + phase) % 1;
+      const a0 = (c - width/2)*Math.PI*2;
+      const a1 = (c + width/2)*Math.PI*2;
 
-    // “GPT-like” moving highlights (2–3 вспышки, завязаны на голос)
-    // Сделано не “пунктиром”, а мягкими дугами с градиентом.
-    ctx.shadowBlur = (16 + vol*26) * DPR;
-    ctx.globalAlpha = 1;
+      const x0 = cx + Math.cos(a0)*r;
+      const y0 = cy + Math.sin(a0)*r;
+      const x1 = cx + Math.cos(a1)*r;
+      const y1 = cy + Math.sin(a1)*r;
 
-    function arcHighlight(phase, width, power){
-      const center = (t*0.55 + phase) % 1; // 0..1
-      const start = (center - width/2) * Math.PI*2;
-      const end   = (center + width/2) * Math.PI*2;
-
-      const g = ctx.createLinearGradient(
-        Math.cos(start)*r, Math.sin(start)*r,
-        Math.cos(end)*r,   Math.sin(end)*r
-      );
+      const g = ctx.createLinearGradient(x0,y0,x1,y1);
       g.addColorStop(0, 'rgba(255,255,255,0)');
-      g.addColorStop(0.5, `rgba(255,255,255,${0.65 + power})`);
+      g.addColorStop(0.5, `rgba(255,255,255,${0.55 + strength})`);
       g.addColorStop(1, 'rgba(255,255,255,0)');
 
       ctx.strokeStyle = g;
-      ctx.lineWidth = (4.0 + power*4.5) * DPR;
+      ctx.lineWidth = (4.2 + strength*4.8);
       ctx.beginPath();
-      ctx.arc(0,0, r + (Math.sin(t*1.4)*1.2), start, end);
+      ctx.arc(cx,cy, r + Math.sin(t*1.3)*1.2, a0, a1);
       ctx.stroke();
     }
+    const p = clamp(activity, 0, 1);
+    highlight(0.12, 0.20 + p*0.10, p*0.65);
+    highlight(0.48, 0.14 + bass*0.10, p*0.38);
+    highlight(0.79, 0.10 + p*0.08, p*0.26);
 
-    const p = clamp(vol*0.85 + snap*0.55, 0, 1);
-    arcHighlight(0.12, 0.22 + p*0.10, p*0.55);
-    arcHighlight(0.47, 0.16 + bass*0.10, p*0.35);
-    arcHighlight(0.78, 0.10 + p*0.08, p*0.25);
-
-    // Внутренние “нитки” — очень subtle, чтобы не было каши
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowBlur = (6 + vol*10) * DPR;
-    ctx.strokeStyle = `rgba(255,255,255,${0.10 + vol*0.14})`;
-    ctx.lineWidth = (2.0) * DPR;
-
-    const innerR = r*0.52;
+    // 4) ВНУТРИ “нить” (очень subtle)
+    ctx.shadowBlur = (8 + activity*14);
+    ctx.strokeStyle = `rgba(255,255,255,${0.08 + activity*0.14})`;
+    ctx.lineWidth = 2.0;
+    const ir = r*0.52;
     ctx.beginPath();
-    ctx.arc(0,0, innerR,  0.25 + Math.sin(t*0.8)*0.08,  1.85 + Math.sin(t*0.9)*0.09);
+    ctx.arc(cx,cy, ir, 0.35 + Math.sin(t*0.8)*0.06, 1.90 + Math.sin(t*0.9)*0.07);
     ctx.stroke();
-
     ctx.beginPath();
-    ctx.arc(0,0, innerR*1.08,  3.35 + Math.sin(t*0.7)*0.10,  4.65 + Math.sin(t*1.0)*0.12);
+    ctx.arc(cx,cy, ir*1.07, 3.45 + Math.sin(t*0.7)*0.08, 4.70 + Math.sin(t*1.0)*0.10);
     ctx.stroke();
 
     ctx.restore();
 
-    // маленькая подсказка если не стартанули микрофон
-    if(!analyser){
-      hint.style.opacity = '1';
-    }
+    if(!analyser) hint.style.opacity='1';
   }
-
-  requestAnimationFrame(draw);
+  requestAnimationFrame(frame);
 })();
 </script>
 </body>
