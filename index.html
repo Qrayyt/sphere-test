@@ -4,11 +4,123 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Glow Orb</title>
-  <link rel="stylesheet" href="style.css" />
+  <style>
+    html,body{height:100%;margin:0;background:#000;display:grid;place-items:center;overflow:hidden}
+    .wrap{width:min(520px,92vw);aspect-ratio:1/1;display:grid;place-items:center}
+    svg{width:min(320px,70vw);height:auto;transform:translateY(10vh);}
+
+    /* общий “дых” */
+    .orb{
+      filter: drop-shadow(0 0 10px rgba(255,255,255,.25))
+              drop-shadow(0 0 30px rgba(255,255,255,.10));
+      animation: float 3.2s ease-in-out infinite;
+    }
+    @keyframes float{
+      0%,100%{transform:translateY(10vh) scale(1)}
+      50%{transform:translateY(10vh) scale(1.03)}
+    }
+
+    /* лёгкое вращение дуг */
+    .spin { transform-origin: 150px 150px; animation: spin 7s linear infinite; }
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* “живые нити” (как будто течёт свет) */
+    .dash{
+      stroke-dasharray: 14 18;
+      animation: dash 1.8s linear infinite, flicker 2.6s ease-in-out infinite;
+    }
+    .dash2{
+      stroke-dasharray: 9 22;
+      animation: dash 2.4s linear infinite reverse, flicker 3.1s ease-in-out infinite;
+    }
+    @keyframes dash{to{stroke-dashoffset:-200}}
+    @keyframes flicker{
+      0%,100%{opacity:.75}
+      50%{opacity:1}
+    }
+
+    /* мягкая аура */
+    .aura{
+      opacity:.35;
+      filter: blur(2px);
+      animation: aura 2.8s ease-in-out infinite;
+    }
+    @keyframes aura{
+      0%,100%{opacity:.20; transform:scale(1)}
+      50%{opacity:.42; transform:scale(1.02)}
+    }
+
+    /* мелкая “дрожь” бликов */
+    .jitter{
+      transform-origin:150px 150px;
+      animation: jitter 1.2s ease-in-out infinite;
+    }
+    @keyframes jitter{
+      0%,100%{transform:translate(0,0) rotate(0deg)}
+      25%{transform:translate(0.6px,-0.4px) rotate(0.15deg)}
+      50%{transform:translate(-0.5px,0.3px) rotate(-0.18deg)}
+      75%{transform:translate(0.4px,0.2px) rotate(0.12deg)}
+    }
+  </style>
 </head>
 <body>
-  <div class="stage">
-    <div class="orb" aria-hidden="true"></div>
+  <div class="wrap">
+    <svg viewBox="0 0 300 300" class="orb" aria-hidden="true">
+      <defs>
+        <!-- Glow -->
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.2" result="b"/>
+          <feColorMatrix in="b" type="matrix"
+            values="
+              1 0 0 0 0
+              0 1 0 0 0
+              0 0 1 0 0
+              0 0 0 0.9 0" result="g"/>
+          <feMerge>
+            <feMergeNode in="g"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+
+        <!-- softer outer aura -->
+        <filter id="aura" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="10" result="bb"/>
+          <feColorMatrix in="bb" type="matrix"
+            values="
+              1 0 0 0 0
+              0 1 0 0 0
+              0 0 1 0 0
+              0 0 0 0.25 0" />
+        </filter>
+      </defs>
+
+      <!-- aura behind -->
+      <circle class="aura" cx="150" cy="150" r="78" fill="none" stroke="white" stroke-width="10" filter="url(#aura)"/>
+
+      <!-- base faint ring (не “металл”, а тень света) -->
+      <circle cx="150" cy="150" r="76" fill="none" stroke="white" stroke-opacity=".10" stroke-width="10"/>
+
+      <!-- main irregular arcs group -->
+      <g class="spin jitter" filter="url(#glow)">
+        <!-- дуги (неровные), чтобы это было “как на рефе” -->
+        <path class="dash"  d="M 96 134 C 78 150, 82 190, 112 206 C 136 220, 164 222, 184 214"
+              fill="none" stroke="white" stroke-width="6" stroke-linecap="round" stroke-opacity=".95"/>
+        <path class="dash2" d="M 118 86 C 92 98, 86 126, 98 148 C 110 170, 130 168, 146 154"
+              fill="none" stroke="white" stroke-width="4.5" stroke-linecap="round" stroke-opacity=".9"/>
+        <path class="dash"  d="M 170 86 C 198 92, 214 112, 210 138 C 206 164, 186 178, 170 176"
+              fill="none" stroke="white" stroke-width="5.5" stroke-linecap="round" stroke-opacity=".9"/>
+        <path class="dash2" d="M 214 172 C 206 202, 182 220, 154 224 C 124 228, 100 214, 90 196"
+              fill="none" stroke="white" stroke-width="4.2" stroke-linecap="round" stroke-opacity=".85"/>
+        <path class="dash"  d="M 206 112 C 214 120, 224 132, 226 150 C 228 168, 222 186, 212 196"
+              fill="none" stroke="white" stroke-width="4.8" stroke-linecap="round" stroke-opacity=".8"/>
+      </g>
+
+      <!-- inner subtle highlights -->
+      <g opacity=".28" filter="url(#glow)">
+        <path d="M 126 120 C 118 138, 124 160, 140 172" fill="none" stroke="white" stroke-width="3.2" stroke-linecap="round"/>
+        <path d="M 160 118 C 174 128, 178 146, 170 160" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round"/>
+      </g>
+    </svg>
   </div>
 </body>
 </html>
