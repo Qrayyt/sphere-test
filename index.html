@@ -1,157 +1,128 @@
 <!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Glow Orb</title>
-  <style>
-    html,body{height:100%;margin:0;background:#000;display:grid;place-items:center;overflow:hidden}
-    .wrap{width:min(560px,92vw);aspect-ratio:1/1;display:grid;place-items:center}
-    svg{width:min(360px,74vw);height:auto;transform:translateY(10vh)}
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Audio Orb</title>
+<style>
+html,body{
+  margin:0;
+  height:100%;
+  background:#000;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+}
 
-    .orb{
-      animation: breathe 2.8s ease-in-out infinite;
-      filter:
-        drop-shadow(0 0 10px rgba(255,255,255,.20))
-        drop-shadow(0 0 35px rgba(255,255,255,.10))
-        drop-shadow(0 0 120px rgba(255,255,255,.05));
-    }
-    @keyframes breathe{
-      0%,100%{opacity:.85; transform:translateY(10vh) scale(1)}
-      50%{opacity:1; transform:translateY(10vh) scale(1.03)}
-    }
-
-    /* очень медленно вращаем только блики, не всю сферу */
-    .spin { transform-origin: 150px 150px; animation: spin 10.5s linear infinite; }
-    @keyframes spin{to{transform:rotate(360deg)}}
-
-    /* мерцание всей линии */
-    .flick{ animation: flick 2.1s ease-in-out infinite; }
-    @keyframes flick{ 0%,100%{opacity:.92} 50%{opacity:1} }
-
-    /* “вспышки” по контуру: короткие сегменты */
-    .flareA{ stroke-dasharray: 46 999; animation: dashA 3.8s linear infinite, flare 1.7s ease-in-out infinite; }
-    .flareB{ stroke-dasharray: 28 999; animation: dashB 5.2s linear infinite, flare 2.2s ease-in-out infinite; }
-    .flareC{ stroke-dasharray: 18 999; animation: dashC 4.6s linear infinite reverse, flare 1.9s ease-in-out infinite; }
-
-    @keyframes dashA{ to{ stroke-dashoffset:-380; } }
-    @keyframes dashB{ to{ stroke-dashoffset:-520; } }
-    @keyframes dashC{ to{ stroke-dashoffset:-460; } }
-
-    @keyframes flare{
-      0%,100%{opacity:.25}
-      50%{opacity:1}
-    }
-
-    /* внутренняя “царапка” живёт, но не бросается */
-    .inner{
-      opacity:.22;
-      animation: inner 2.9s ease-in-out infinite;
-    }
-    @keyframes inner{ 0%,100%{opacity:.14} 50%{opacity:.28} }
-
-    @media (prefers-reduced-motion: reduce){
-      .orb,.spin,.flick,.flareA,.flareB,.flareC,.inner{animation:none!important}
-    }
-  </style>
+canvas{
+  width:min(420px,80vw);
+  height:min(420px,80vw);
+}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <svg class="orb" viewBox="0 0 300 300" aria-hidden="true">
-      <defs>
-        <!-- неровность (делает линию “живой”) -->
-        <filter id="wobble" x="-35%" y="-35%" width="170%" height="170%">
-          <feTurbulence type="fractalNoise" baseFrequency="0.010" numOctaves="2" seed="11" result="n">
-            <animate attributeName="baseFrequency" dur="3.4s" values="0.009;0.012;0.009" repeatCount="indefinite"/>
-          </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="n" scale="11" xChannelSelector="R" yChannelSelector="G"/>
-        </filter>
 
-        <!-- свечение (жёстче, чтобы был “прожиг” как в рефе) -->
-        <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
-          <feGaussianBlur stdDeviation="2.1" result="b"/>
-          <feMerge>
-            <feMergeNode in="b"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
+<canvas id="c"></canvas>
 
-        <!-- большая аура -->
-        <filter id="aura" x="-140%" y="-140%" width="380%" height="380%">
-          <feGaussianBlur stdDeviation="16" result="bb"/>
-          <feColorMatrix in="bb" type="matrix"
-            values="
-              1 0 0 0 0
-              0 1 0 0 0
-              0 0 1 0 0
-              0 0 0 0.22 0"/>
-        </filter>
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
 
-        <!-- градиент яркости по штриху (чтобы не было “одинаково белое”) -->
-        <linearGradient id="strokeGrad" x1="70" y1="70" x2="230" y2="230" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="white" stop-opacity="0.65"/>
-          <stop offset="0.35" stop-color="white" stop-opacity="0.95"/>
-          <stop offset="0.7" stop-color="white" stop-opacity="0.55"/>
-          <stop offset="1" stop-color="white" stop-opacity="0.85"/>
-        </linearGradient>
+let size = 500;
+canvas.width = size;
+canvas.height = size;
 
-        <!-- НЕ идеальный круг: чуть “помятый” контур -->
-        <path id="ring"
-          d="M150 70
-             C201 71, 235 104, 234 150
-             C233 204, 198 233, 150 232
-             C103 231, 67 201, 68 150
-             C69 104, 98 69, 150 70 Z" />
-      </defs>
+let audioCtx, analyser, dataArray;
+let started = false;
 
-      <!-- аура -->
-      <use href="#ring" fill="none" stroke="white" stroke-width="20" opacity=".18" filter="url(#aura)"/>
+async function initAudio(){
+  if(started) return;
+  started = true;
 
-      <!-- базовый мягкий контур (толще, но тусклый) -->
-      <g filter="url(#wobble)">
-        <use href="#ring" fill="none" stroke="white" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round" opacity=".12"/>
-      </g>
+  const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
 
-      <!-- основной “световой” контур: не слишком жирный, но яркий -->
-      <g filter="url(#wobble)">
-        <use href="#ring"
-             class="flick"
-             fill="none"
-             stroke="url(#strokeGrad)"
-             stroke-width="6.4"
-             stroke-linecap="round"
-             stroke-linejoin="round"
-             filter="url(#glow)"/>
-      </g>
+  const source = audioCtx.createMediaStreamSource(stream);
+  source.connect(analyser);
 
-      <!-- вспышки (локальные яркие зоны, которые двигаются) -->
-      <g class="spin" filter="url(#wobble)">
-        <!-- Супер-яркая тонкая сердцевина -->
-        <use href="#ring" class="flareA"
-             fill="none" stroke="white"
-             stroke-width="6.2" stroke-linecap="round" stroke-linejoin="round"
-             filter="url(#glow)"/>
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+}
 
-        <!-- Вторая вспышка, чуть тоньше -->
-        <use href="#ring" class="flareB"
-             fill="none" stroke="white"
-             stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round"
-             filter="url(#glow)"/>
+canvas.addEventListener("click", initAudio);
+canvas.addEventListener("touchstart", initAudio);
 
-        <!-- Маленькая третья, чтобы было “случайно” -->
-        <use href="#ring" class="flareC"
-             fill="none" stroke="white"
-             stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"
-             filter="url(#glow)"/>
-      </g>
+function draw(){
+  requestAnimationFrame(draw);
 
-      <!-- внутренние “переливы/царапки” -->
-      <g class="inner" filter="url(#glow)">
-        <path d="M118 126 C108 152, 122 178, 146 190" fill="none" stroke="white" stroke-width="4.2" stroke-linecap="round"/>
-        <path d="M168 116 C190 130, 192 158, 174 174" fill="none" stroke="white" stroke-width="3.6" stroke-linecap="round"/>
-        <path d="M142 108 C132 124, 130 140, 138 154" fill="none" stroke="white" stroke-width="2.8" stroke-linecap="round" opacity=".7"/>
-      </g>
-    </svg>
-  </div>
+  ctx.clearRect(0,0,size,size);
+
+  let cx = size/2;
+  let cy = size/2;
+  let baseRadius = 130;
+
+  let volume = 0;
+
+  if(analyser){
+    analyser.getByteFrequencyData(dataArray);
+    let sum = 0;
+    for(let i=0;i<dataArray.length;i++){
+      sum += dataArray[i];
+    }
+    volume = sum / dataArray.length / 255;
+  }
+
+  let dynamicRadius = baseRadius + volume * 60;
+
+  ctx.save();
+  ctx.translate(cx,cy);
+
+  ctx.shadowColor = "white";
+  ctx.shadowBlur = 30 + volume*40;
+
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = "white";
+  ctx.globalAlpha = 0.9;
+
+  ctx.beginPath();
+
+  let points = 160;
+  for(let i=0;i<=points;i++){
+    let angle = (i/points)*Math.PI*2;
+
+    let noise =
+      Math.sin(angle*3 + performance.now()*0.002) * 6 +
+      Math.sin(angle*7 + performance.now()*0.0015) * 4;
+
+    let r = dynamicRadius + noise * (0.3 + volume*1.8);
+
+    let x = Math.cos(angle) * r;
+    let y = Math.sin(angle) * r;
+
+    if(i===0){
+      ctx.moveTo(x,y);
+    }else{
+      ctx.lineTo(x,y);
+    }
+  }
+
+  ctx.closePath();
+  ctx.stroke();
+
+  // внутренняя мягкая аура
+  let grad = ctx.createRadialGradient(0,0, dynamicRadius*0.5, 0,0, dynamicRadius*1.4);
+  grad.addColorStop(0,"rgba(255,255,255,0.05)");
+  grad.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0,0,dynamicRadius*1.3,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+draw();
+</script>
 </body>
 </html>
